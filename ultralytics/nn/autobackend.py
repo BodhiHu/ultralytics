@@ -168,6 +168,14 @@ class AutoBackend(nn.Module):
                 kpt_shape = model.kpt_shape  # pose-only
             stride = max(int(model.stride.max()), 32)  # model stride
             names = model.module.names if hasattr(model, "module") else model.names  # get class names
+
+            qint8 = False
+            for n, m in model.named_modules():
+                if str(type(m)).find("quantized") > 0:
+                    LOGGER.info("model is quantized, using dtype quint8 for input")
+                    qint8 = True
+                    break
+
             model.half() if fp16 else model.float()
             self.model = model  # explicitly assign for to(), cpu(), cuda(), half()
             pt = True
@@ -567,6 +575,9 @@ class AutoBackend(nn.Module):
             im = im.half()  # to FP16
         if self.nhwc:
             im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+
+        if self.qint8:
+            im.to(torch.quint8)
 
         # PyTorch
         if self.pt or self.nn_module:

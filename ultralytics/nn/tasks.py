@@ -202,6 +202,10 @@ class BaseModel(torch.nn.Module):
                 if isinstance(m, (Conv, Conv2, DWConv)) and hasattr(m, "bn"):
                     if isinstance(m, Conv2):
                         m.fuse_convs()
+                    if isinstance(m.conv, torch.ao.nn.quantized.modules.conv.Conv2d) and \
+                        not isinstance(m.bn, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
+                        LOGGER.info(f"skip fusing conv and bn of mixed precisions")
+                        continue
                     m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
                     delattr(m, "bn")  # remove batchnorm
                     m.forward = m.forward_fuse  # update forward
