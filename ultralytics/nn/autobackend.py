@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+import torch.ao.quantization as tq
 
 from ultralytics.utils import ARM64, IS_JETSON, IS_RASPBERRYPI, LINUX, LOGGER, PYTHON_VERSION, ROOT, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_version, check_yaml, is_rockchip
@@ -570,14 +571,27 @@ class AutoBackend(nn.Module):
         Returns:
             (torch.Tensor | List[torch.Tensor]): The raw output tensor(s) from the model.
         """
+
+        if self.qint8:
+            qcfg = tq.QConfig(
+                activation=tq.HistogramObserver.with_args(reduce_range=False, dtype=torch.qint8),
+                weight=tq.MinMaxObserver.with_args(qscheme=torch.per_tensor_symmetric, dtype=torch.qint8)
+            )
+            activation_observer = qcfg.activation()
+            activation_observer(im)
+            scale, zero_point = activation_observer.calculate_qparams()
+            im = torch.quantize_per_tensor(
+                im,
+                scale=scale,
+                zero_point=zero_point,
+                dtype=torch.qint8
+            )
+
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16
         if self.nhwc:
             im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
-
-        if self.qint8:
-            im.to(torch.quint8)
 
         # PyTorch
         if self.pt or self.nn_module:
@@ -795,7 +809,7 @@ class AutoBackend(nn.Module):
 
         warmup_types = self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb, self.triton, self.nn_module
         if any(warmup_types) and (self.device.type != "cpu" or self.triton):
-            im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            im = torch.rand(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
             for _ in range(2 if self.jit else 1):
                 self.forward(im)  # warmup
 
