@@ -169,20 +169,22 @@ class BasePredictor:
 
     def graph_inference(self, im, *args, **kwargs):
         def _infer():
-            return self.model(im, augment=self.args.augment, embed=self.args.embed, *args, **kwargs)
+            return self.model(im, *args, **kwargs)
 
         assert self.done_warmup, "graph inference must be run after warmup done"
         assert (self.model.pt or self.model.jit), "graph inference only support PyTorch models"
 
         if self.graph_in is None:
             self.graph_in = im
-
-        g = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g):
-            self.graph_out[0] = _infer()
+            # only capture graph once
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                self.graph_out[0] = _infer()
+            LOGGER.info("cuda graph capture success")
 
         self.graph_in.copy_(im)
         g.replay()
+        torch.cuda.synchronize()
         return self.graph_out[0]
 
     def inference(self, im, *args, **kwargs):
