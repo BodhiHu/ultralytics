@@ -138,6 +138,12 @@ class BasePredictor:
         self.transforms = None
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
         self.txt_path = None
+
+        # use cuda graphs
+        self.use_graph = False
+        self.graph_in = None
+        self.graph_out = [None]
+
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
 
@@ -161,6 +167,24 @@ class BasePredictor:
             im /= 255  # 0 - 255 to 0.0 - 1.0
         return im
 
+    def graph_inference(self, im, *args, **kwargs):
+        def _infer():
+            return self.model(im, augment=self.args.augment, embed=self.args.embed, *args, **kwargs)
+
+        assert self.done_warmup, "graph inference must be run after warmup done"
+        assert (self.model.pt or self.model.jit), "graph inference only support PyTorch models"
+
+        if self.graph_in is None:
+            self.graph_in = im
+
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            self.graph_out[0] = _infer()
+
+        self.graph_in.copy_(im)
+        g.replay()
+        return self.graph_out[0]
+
     def inference(self, im, *args, **kwargs):
         """Run inference on a given image using the specified model and arguments."""
         visualize = (
@@ -168,6 +192,10 @@ class BasePredictor:
             if self.args.visualize and (not self.source_type.tensor)
             else False
         )
+
+        if self.use_graph and (self.model.pt or self.model.jit):
+            return self.graph_inference(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
+
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
     def pre_transform(self, im):
