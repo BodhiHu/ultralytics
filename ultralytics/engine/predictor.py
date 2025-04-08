@@ -141,6 +141,7 @@ class BasePredictor:
 
         # use cuda graphs
         self.use_graph = False
+        self.graph = None
         self.graph_in = None
         self.graph_out = [None]
 
@@ -168,22 +169,12 @@ class BasePredictor:
         return im
 
     def graph_inference(self, im, *args, **kwargs):
-        def _infer():
-            return self.model(im, *args, **kwargs)
-
         assert self.done_warmup, "graph inference must be run after warmup done"
         assert (self.model.pt or self.model.jit), "graph inference only support PyTorch models"
-
-        if self.graph_in is None:
-            self.graph_in = im
-            # only capture graph once
-            g = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g):
-                self.graph_out[0] = _infer()
-            LOGGER.info("cuda graph capture success")
+        assert self.graph is not None, "cuda graph should have been created in warm up phase"
 
         self.graph_in.copy_(im)
-        g.replay()
+        self.graph.replay()
         torch.cuda.synchronize()
         return self.graph_out[0]
 
@@ -331,7 +322,18 @@ class BasePredictor:
 
             # Warmup model
             if not self.done_warmup:
+                imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz)
+
                 self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz))
+
+                if self.use_graph and (self.model.pt or self.model.jit):
+                    im = torch.rand(*imgsz, dtype=torch.half if self.model.fp16 else torch.float, device=self.model.device)
+                    self.graph_in = im
+                    self.graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(self.graph):
+                        self.graph_out[0] = self.model(im, *args, **kwargs)
+                    LOGGER.info("cuda graph capture warmup success")
+
                 self.done_warmup = True
 
             self.seen, self.windows, self.batch = 0, [], None
