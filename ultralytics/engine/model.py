@@ -548,8 +548,7 @@ class Model(torch.nn.Module):
         if prompts and hasattr(self.predictor, "set_prompts"):  # for SAM-type models
             self.predictor.set_prompts(prompts)
 
-        if hasattr(args, "use_graph"):
-            self.predictor.use_graph = args["use_graph"] is True
+        self.predictor.use_graph = "use_graph" in args and args["use_graph"] is True
 
         return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
 
