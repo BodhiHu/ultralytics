@@ -160,7 +160,7 @@ class AutoBackend(nn.Module):
         # In-memory PyTorch model
         if nn_module:
             model = weights.to(device)
-            if fuse:
+            if fuse and hasattr(model, "fuse"):
                 if type(model) == torch._dynamo.eval_frame.OptimizedModule:
                     model.fuse(verbose=verbose)
                 else:
