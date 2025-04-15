@@ -90,6 +90,18 @@ class Conv(nn.Module):
         """
         return self.act(self.conv(x))
 
+    def forward_convsilu2d(self, x):
+        """
+        Apply fused conv2d and silu.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Output tensor.
+        """
+        return self.conv_silu_2d(x)
+
 
 class Conv2(Conv):
     """

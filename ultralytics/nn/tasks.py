@@ -219,6 +219,21 @@ class BaseModel(torch.nn.Module):
                 if isinstance(m, RepVGGDW):
                     m.fuse()
                     m.forward = m.forward_fuse
+
+            # futher fuse conv2d and SiLU
+            try:
+                import torch_musa
+
+                for m in self.model.modules():
+                    if isinstance(m, (Conv, Conv2, DWConv)) and hasattr(m, "act") and isinstance(m.act, torch.nn.SiLU):
+                        m.conv_silu_2d = torch.ao.nn.intrinsic.ConvSiLU2d(m.conv, m.act)
+                        m.forward = m.forward_convsilu2d
+                        delattr(m, "conv")
+                        delattr(m, "act")
+            except ImportError as exc:
+                LOGGER.warn(f"ImportError: {str(exc)}")
+                LOGGER.warn(f"can not fuse Conv2d and SiLU")
+
             self.info(verbose=verbose)
 
         return self
