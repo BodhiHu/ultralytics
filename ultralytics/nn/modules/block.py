@@ -68,7 +68,7 @@ class DFL(nn.Module):
         self.conv.weight.data[:] = nn.Parameter(x.view(1, c1, 1, 1))
         self.c1 = c1
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         """Apply the DFL module to input tensor and return transformed output."""
         b, _, a = x.shape  # batch, channels, anchors
         return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
@@ -299,6 +299,30 @@ class C2f(nn.Module):
         """Forward pass through C2f layer."""
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
+
+        is_quantized = False
+        q_dtype = None
+        for i in range(len(y)):
+            if y[i].is_quantized:
+                is_quantized = True
+                q_dtype = y[i].dtype
+
+            if is_quantized and not y[i].is_quantized:
+                if q_dtype == torch.qint8:
+                    max_val = torch.max(torch.abs(y[i]))
+                    scale = (max_val / 127).item()
+                    zero_point = 0
+                elif q_dtype == torch.quint8:
+                    min_val = torch.min(y[i])
+                    max_val = torch.max(y[i])
+                    scale = (max_val - min_val) / 255
+                    zero_point = torch.round(-min_val / scale).to(torch.int32).item()
+                    scale = scale.item()
+                else:
+                    raise Exception(f"Unknown quant dtype: {q_dtype}")
+
+                y[i] = torch.quantize_per_tensor(y[i], scale=scale, zero_point=zero_point, dtype=q_dtype)
+
         return self.cv2(torch.cat(y, 1))
 
     def forward_split(self, x):
@@ -473,6 +497,14 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         """Apply bottleneck with optional shortcut connection."""
+
+        if x.is_quantized:
+            orig_x = x
+            x = self.cv2(self.cv1(x))
+            if self.add:
+                x = torch.ops.quantized.add(orig_x, x, x.q_scale(), zero_point=x.q_zero_point())
+            return x
+
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 
