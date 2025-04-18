@@ -12,7 +12,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-import torch.ao.quantization as tq
 
 from ultralytics.utils import ARM64, IS_JETSON, IS_RASPBERRYPI, LINUX, LOGGER, PYTHON_VERSION, ROOT, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_version, check_yaml, is_rockchip
@@ -169,13 +168,6 @@ class AutoBackend(nn.Module):
                 kpt_shape = model.kpt_shape  # pose-only
             stride = max(int(model.stride.max()), 32)  # model stride
             names = model.module.names if hasattr(model, "module") else model.names  # get class names
-
-            qint8 = False
-            for n, m in model.named_modules():
-                if str(type(m)).find("quantized") > 0:
-                    LOGGER.info("model is quantized, using dtype quint8 for input")
-                    qint8 = True
-                    break
 
             model.half() if fp16 else model.float()
             self.model = model  # explicitly assign for to(), cpu(), cuda(), half()
@@ -572,21 +564,6 @@ class AutoBackend(nn.Module):
             (torch.Tensor | List[torch.Tensor]): The raw output tensor(s) from the model.
         """
 
-        if self.qint8:
-            qcfg = tq.QConfig(
-                activation=tq.HistogramObserver.with_args(reduce_range=False, dtype=torch.qint8),
-                weight=tq.MinMaxObserver.with_args(qscheme=torch.per_tensor_symmetric, dtype=torch.qint8)
-            )
-            activation_observer = qcfg.activation()
-            activation_observer(im)
-            scale, zero_point = activation_observer.calculate_qparams()
-            im = torch.quantize_per_tensor(
-                im,
-                scale=scale,
-                zero_point=zero_point,
-                dtype=torch.qint8
-            )
-
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16
@@ -809,7 +786,7 @@ class AutoBackend(nn.Module):
 
         warmup_types = self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb, self.triton, self.nn_module
         if any(warmup_types) and (self.device.type != "cpu" or self.triton):
-            im = torch.rand(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
             for _ in range(2 if (self.pt or self.jit) else 1):
                 self.forward(im)  # warmup
 

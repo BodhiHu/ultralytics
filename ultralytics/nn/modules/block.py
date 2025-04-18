@@ -306,24 +306,26 @@ class C2f(nn.Module):
             if y[i].is_quantized:
                 is_quantized = True
                 q_dtype = y[i].dtype
+                y[i] = y[i].dequantize()
 
-            if is_quantized and not y[i].is_quantized:
-                if q_dtype == torch.qint8:
-                    max_val = torch.max(torch.abs(y[i]))
-                    scale = (max_val / 127).item()
-                    zero_point = 0
-                elif q_dtype == torch.quint8:
-                    min_val = torch.min(y[i])
-                    max_val = torch.max(y[i])
-                    scale = (max_val - min_val) / 255
-                    zero_point = torch.round(-min_val / scale).to(torch.int32).item()
-                    scale = scale.item()
-                else:
-                    raise Exception(f"Unknown quant dtype: {q_dtype}")
+        y = torch.cat(y, 1)
+        if is_quantized and not y.is_quantized:
+            if q_dtype == torch.qint8:
+                max_val = torch.max(torch.abs(y))
+                scale = (max_val / 127).item()
+                zero_point = 0
+            # elif q_dtype == torch.quint8:
+            #     min_val = torch.min(y)
+            #     max_val = torch.max(y)
+            #     scale = (max_val - min_val) / 255
+            #     zero_point = torch.round(-min_val / scale).to(torch.int32).item()
+            #     scale = scale.item()
+            else:
+                raise Exception(f"Unsupported quant dtype: {q_dtype}")
 
-                y[i] = torch.quantize_per_tensor(y[i], scale=scale, zero_point=zero_point, dtype=q_dtype)
+            y = torch.quantize_per_tensor(y, scale=scale, zero_point=zero_point, dtype=q_dtype)
 
-        return self.cv2(torch.cat(y, 1))
+        return self.cv2(y)
 
     def forward_split(self, x):
         """Forward pass using split() instead of chunk()."""
