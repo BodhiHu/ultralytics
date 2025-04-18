@@ -306,7 +306,7 @@ class C2f(nn.Module):
             if y[i].is_quantized:
                 is_quantized = True
                 q_dtype = y[i].dtype
-                y[i] = y[i].dequantize()
+                y[i] = y[i].dequantize().half()
 
         y = torch.cat(y, 1)
         if is_quantized and not y.is_quantized:
@@ -323,7 +323,7 @@ class C2f(nn.Module):
             else:
                 raise Exception(f"Unsupported quant dtype: {q_dtype}")
 
-            y = torch.quantize_per_tensor(y, scale=scale, zero_point=zero_point, dtype=q_dtype)
+            y = torch.quantize_per_tensor(y.float(), scale=scale, zero_point=zero_point, dtype=q_dtype)
 
         return self.cv2(y)
 

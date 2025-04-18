@@ -68,7 +68,7 @@ class Detect(nn.Module):
 
         for i in range(len(x)):
             if x[i].is_quantized:
-                x[i] = x[i].dequantize()
+                x[i] = x[i].dequantize().half()
 
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
