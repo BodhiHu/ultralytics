@@ -119,6 +119,12 @@ class BaseValidator:
         self.jdict = None
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
 
+        # use cuda graphs
+        self.use_graph = False
+        self.graph = None
+        self.graph_in = None
+        self.graph_out = [None]
+
         self.save_dir = save_dir or get_save_dir(self.args)
         (self.save_dir / "labels" if self.args.save_txt else self.save_dir).mkdir(parents=True, exist_ok=True)
         if self.args.conf is None:
@@ -190,7 +196,15 @@ class BaseValidator:
             self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
 
             model.eval()
-            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
+            imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz)
+            model.warmup(imgsz=imgsz)  # warmup
+            if self.use_graph and (model.pt or model.jit) and not self.training:
+                im = torch.rand(*imgsz, dtype=torch.half if model.fp16 else torch.float, device=model.device)
+                self.graph_in = im
+                self.graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(self.graph):
+                    self.graph_out[0] = model(im)
+                LOGGER.info("cuda graph capture warmup success")
 
         self.run_callbacks("on_val_start")
         dt = (
@@ -211,7 +225,13 @@ class BaseValidator:
 
             # Inference
             with dt[1]:
-                preds = model(batch["img"], augment=augment)
+                if self.use_graph and (model.pt or model.jit) and not self.training:
+                    self.graph_in.copy_(im)
+                    self.graph.replay()
+                    torch.cuda.synchronize()
+                    preds = self.graph_out[0]
+                else:
+                    preds = model(batch["img"], augment=augment)
 
             # Loss
             with dt[2]:
@@ -221,6 +241,12 @@ class BaseValidator:
             # Postprocess
             with dt[3]:
                 preds = self.postprocess(preds)
+
+            # @bodhi per image speed:
+            # _speed = dict(zip(self.speed.keys(), (x.dt * 1e3 for x in dt)))
+            # LOGGER.info(
+            #     "Speed: {:.1f}ms preprocess, {:.1f}ms inference, {:.1f} loss, {:.1f}ms postprocess per image".format(*tuple(_speed.values()))
+            # )
 
             self.update_metrics(preds, batch)
             if self.args.plots and batch_i < 3:

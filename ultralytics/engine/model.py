@@ -628,6 +628,7 @@ class Model(torch.nn.Module):
         args = {**self.overrides, **custom, **kwargs, "mode": "val"}  # highest priority args on the right
 
         validator = (validator or self._smart_load("validator"))(args=args, _callbacks=self.callbacks)
+        validator.use_graph = "use_graph" in args and args["use_graph"] is True
         validator(model=self.model)
         self.metrics = validator.metrics
         return validator.metrics
