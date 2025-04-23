@@ -232,6 +232,7 @@ class BaseValidator:
                     preds = self.graph_out[0]
                 else:
                     preds = model(batch["img"], augment=augment)
+                    torch.cuda.synchronize()
 
             # Loss
             with dt[2]:
