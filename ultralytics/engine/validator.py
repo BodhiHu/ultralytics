@@ -124,6 +124,7 @@ class BaseValidator:
         self.graph = None
         self.graph_in = None
         self.graph_out = [None]
+        self.graph_warmup_done = False
 
         self.save_dir = save_dir or get_save_dir(self.args)
         (self.save_dir / "labels" if self.args.save_txt else self.save_dir).mkdir(parents=True, exist_ok=True)
@@ -198,13 +199,6 @@ class BaseValidator:
             model.eval()
             imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz)
             model.warmup(imgsz=imgsz)  # warmup
-            if self.use_graph and (model.pt or model.jit) and not self.training:
-                im = torch.rand(*imgsz, dtype=torch.half if model.fp16 else torch.float, device=model.device)
-                self.graph_in = im
-                self.graph = torch.cuda.CUDAGraph()
-                with torch.cuda.graph(self.graph):
-                    self.graph_out[0] = model(im)
-                LOGGER.info("cuda graph capture warmup success")
 
         self.run_callbacks("on_val_start")
         dt = (
@@ -225,7 +219,24 @@ class BaseValidator:
 
             # Inference
             with dt[1]:
-                if self.use_graph and (model.pt or model.jit) and not self.training:
+                if self.use_graph:
+                    assert (model.pt or model.jit) and not self.training, \
+                        "cuda graph mode can only be used for inference and only support PyTorch models"
+
+                    im = batch["img"]
+                    if self.graph_warmup_done and im.shape != self.graph_in.shape:
+                        LOGGER.warn(f"\nWARNING: input image shape changed, will re-warmup cuda graph!\n")
+                        self.graph_warmup_done = False
+                    if not self.graph_warmup_done:
+                        self.graph_in = im
+                        self.graph = torch.cuda.CUDAGraph()
+                        with torch.cuda.graph(self.graph):
+                            self.graph_out[0] = model(im)
+                        LOGGER.info("\ncuda graph capture warmup success\n")
+                        self.graph_warmup_done = True
+
+                    assert im.shape == self.graph_in.shape
+
                     self.graph_in.copy_(im)
                     self.graph.replay()
                     torch.cuda.synchronize()

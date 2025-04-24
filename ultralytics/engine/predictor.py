@@ -144,6 +144,7 @@ class BasePredictor:
         self.graph = None
         self.graph_in = None
         self.graph_out = [None]
+        self.graph_warmup_done = False
 
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
@@ -169,9 +170,21 @@ class BasePredictor:
         return im
 
     def graph_inference(self, im, *args, **kwargs):
-        assert self.done_warmup, "graph inference must be run after warmup done"
         assert (self.model.pt or self.model.jit), "graph inference only support PyTorch models"
-        assert self.graph is not None, "cuda graph should have been created in warm up phase"
+
+        if self.graph_warmup_done and im.shape != self.graph_in.shape:
+            LOGGER.warn(f"WARNING: input image shape changed, will re-warmup cuda graph!")
+            self.graph_warmup_done = False
+
+        if not self.graph_warmup_done:
+            self.graph_in = im
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph):
+                self.graph_out[0] = self.model(im, *args, **kwargs)
+            LOGGER.info("cuda graph capture warmup success")
+            self.graph_warmup_done = True
+
+        assert im.shape == self.graph_in.shape
 
         self.graph_in.copy_(im)
         self.graph.replay()
@@ -322,18 +335,7 @@ class BasePredictor:
 
             # Warmup model
             if not self.done_warmup:
-                imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz)
-
                 self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz))
-
-                if self.use_graph and (self.model.pt or self.model.jit):
-                    im = torch.rand(*imgsz, dtype=torch.half if self.model.fp16 else torch.float, device=self.model.device)
-                    self.graph_in = im
-                    self.graph = torch.cuda.CUDAGraph()
-                    with torch.cuda.graph(self.graph):
-                        self.graph_out[0] = self.model(im, *args, **kwargs)
-                    LOGGER.info("cuda graph capture warmup success")
-
                 self.done_warmup = True
 
             self.seen, self.windows, self.batch = 0, [], None
@@ -350,6 +352,8 @@ class BasePredictor:
                 # Preprocess
                 with profilers[0]:
                     im = self.preprocess(im0s)
+                    if self.args.verbose:
+                        LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
 
                 # Inference
                 with profilers[1]:
