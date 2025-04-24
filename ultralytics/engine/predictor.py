@@ -146,10 +146,13 @@ class BasePredictor:
         self.graph_out = [None]
         self.graph_warmup_done = False
 
+        self.preprocess_device = None
+        self.postprocess_device = None
+
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
 
-    def preprocess(self, im):
+    def preprocess(self, im, device=None):
         """
         Prepares input image before inference.
 
@@ -163,7 +166,7 @@ class BasePredictor:
             im = np.ascontiguousarray(im)  # contiguous
             im = torch.from_numpy(im)
 
-        im = im.to(self.device)
+        im = im.to(device or self.device)
         im = im.half() if self.model.fp16 else im.float()  # uint8 to fp16/32
         if not_tensor:
             im /= 255  # 0 - 255 to 0.0 - 1.0
@@ -351,7 +354,10 @@ class BasePredictor:
 
                 # Preprocess
                 with profilers[0]:
-                    im = self.preprocess(im0s)
+                    if self.preprocess_device:
+                        LOGGER.info(f"running preprocess on {self.preprocess_device}")
+                    im = self.preprocess(im0s, device=self.preprocess_device)
+                    im = im.to(self.device)
                     if self.args.verbose:
                         LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
 
@@ -365,6 +371,9 @@ class BasePredictor:
 
                 # Postprocess
                 with profilers[2]:
+                    if self.postprocess_device is not None:
+                        LOGGER.info(f"running postprocess on {self.postprocess_device}")
+                        im = im.to(self.postprocess_device)
                     self.results = self.postprocess(preds, im, im0s)
                 self.run_callbacks("on_predict_postprocess_end")
 

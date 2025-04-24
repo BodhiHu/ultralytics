@@ -548,7 +548,9 @@ class Model(torch.nn.Module):
         if prompts and hasattr(self.predictor, "set_prompts"):  # for SAM-type models
             self.predictor.set_prompts(prompts)
 
-        self.predictor.use_graph = "use_graph" in args and args["use_graph"] is True
+        self.predictor.use_graph = args.get("use_graph", False)
+        self.predictor.postprocess_device = args.get("postprocess_device", None)
+        self.predictor.preprocess_device = args.get("preprocess_device", None)
 
         return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
 
@@ -628,7 +630,7 @@ class Model(torch.nn.Module):
         args = {**self.overrides, **custom, **kwargs, "mode": "val"}  # highest priority args on the right
 
         validator = (validator or self._smart_load("validator"))(args=args, _callbacks=self.callbacks)
-        validator.use_graph = "use_graph" in args and args["use_graph"] is True
+        validator.use_graph = args.get("use_graph", False)
         validator(model=self.model)
         self.metrics = validator.metrics
         return validator.metrics

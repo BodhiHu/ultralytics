@@ -67,6 +67,8 @@ classes: # (int | list[int], optional) filter results by class, i.e. classes=0, 
 retina_masks: False # (bool) use high-resolution segmentation masks
 embed: # (list[int], optional) return feature vectors/embeddings from given layers
 use_graph: False # (bool) if use pytorch cuda graph for inference
+preprocess_device: None # (str) device to use for preprocess, default to model device
+postprocess_device: None # (str) device to use for postprocess, default to model device
 
 # Visualize settings ---------------------------------------------------------------------------------------------------
 show: False # (bool) show predicted images and videos if environment allows
