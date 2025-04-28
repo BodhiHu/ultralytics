@@ -552,7 +552,11 @@ class Model(torch.nn.Module):
         self.predictor.postprocess_device = args.get("postprocess_device", None)
         self.predictor.preprocess_device = args.get("preprocess_device", None)
 
-        return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
+        kwargs = {
+            "phase": args.get("phase", None),
+            "phase_input": args.get("phase_input", None),
+        }
+        return self.predictor.predict_cli(source=source, **kwargs) if is_cli else self.predictor(source=source, stream=stream, **kwargs)
 
     def track(
         self,

@@ -251,7 +251,7 @@ class BasePredictor:
         else:
             return list(self.stream_inference(source, model, *args, **kwargs))  # merge list of Result into one
 
-    def predict_cli(self, source=None, model=None):
+    def predict_cli(self, source=None, model=None, *args, **kwargs):
         """
         Method used for Command Line Interface (CLI) prediction.
 
@@ -268,7 +268,7 @@ class BasePredictor:
             Do not modify this function or remove the generator. The generator ensures that no outputs are
             accumulated in memory, which is critical for preventing memory issues during long-running predictions.
         """
-        gen = self.stream_inference(source, model)
+        gen = self.stream_inference(source, model, *args, **kwargs)
         for _ in gen:  # sourcery skip: remove-empty-nested-block, noqa
             pass
 
@@ -307,7 +307,7 @@ class BasePredictor:
         self.vid_writer = {}
 
     @smart_inference_mode()
-    def stream_inference(self, source=None, model=None, *args, **kwargs):
+    def stream_inference(self, source=None, model=None, phase=None, phase_input=None, *args, **kwargs):
         """
         Stream real-time inference on camera feed and save results to file.
 
@@ -341,6 +341,10 @@ class BasePredictor:
                 self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz))
                 self.done_warmup = True
 
+            if phase is not None:
+                assert len(self.dataset) == 1, \
+                "there can only be one input when running with specific phase"
+
             self.seen, self.windows, self.batch = 0, [], None
             profilers = (
                 ops.Profile(device=self.device),
@@ -353,29 +357,48 @@ class BasePredictor:
                 paths, im0s, s = self.batch
 
                 # Preprocess
-                with profilers[0]:
-                    if self.preprocess_device:
-                        LOGGER.info(f"running preprocess on {self.preprocess_device}")
-                    im = self.preprocess(im0s, device=self.preprocess_device)
-                    im = im.to(self.device)
-                    if self.args.verbose:
-                        LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
+                if phase is None or phase == 'preprocess':
+                    with profilers[0]:
+                        if self.preprocess_device:
+                            if self.args.verbose:
+                                LOGGER.info(f"running preprocess on {self.preprocess_device}")
+                        im = self.preprocess(im0s, device=self.preprocess_device)
+                        im = im.to(self.device)
+                        if self.args.verbose:
+                            LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
+                        if phase == 'preprocess':
+                            yield im
+                            continue
 
                 # Inference
-                with profilers[1]:
-                    preds = self.inference(im, *args, **kwargs)
-                    torch.cuda.synchronize()
-                    if self.args.embed:
-                        yield from [preds] if isinstance(preds, torch.Tensor) else preds  # yield embedding tensors
-                        continue
+                if phase is None or phase == 'inference':
+                    if phase == 'inference':
+                        im = phase_input[0]
+                    with profilers[1]:
+                        preds = self.inference(im, *args, **kwargs)
+                        torch.cuda.synchronize()
+                        if phase == 'inference':
+                            yield from [preds, im]
+                            continue
+                        if self.args.embed:
+                            yield from [preds] if isinstance(preds, torch.Tensor) else preds  # yield embedding tensors
+                            continue
 
                 # Postprocess
-                with profilers[2]:
-                    if self.postprocess_device is not None:
-                        LOGGER.info(f"running postprocess on {self.postprocess_device}")
-                        im = im.to(self.postprocess_device)
-                    self.results = self.postprocess(preds, im, im0s)
-                self.run_callbacks("on_predict_postprocess_end")
+                if phase is None or phase == 'postprocess':
+                    if phase == 'postprocess':
+                        (preds, im) = phase_input
+                    with profilers[2]:
+                        if self.postprocess_device is not None:
+                            if self.args.verbose:
+                                LOGGER.info(f"running postprocess on {self.postprocess_device}")
+                            im = im.to(self.postprocess_device)
+                        self.results = self.postprocess(preds, im, im0s)
+                    self.run_callbacks("on_predict_postprocess_end")
+
+                    if phase == 'postprocess':
+                        yield from self.results
+                        continue
 
                 # Visualize, save, write results
                 n = len(im0s)
