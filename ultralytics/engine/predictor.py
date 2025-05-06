@@ -166,7 +166,9 @@ class BasePredictor:
             im = np.ascontiguousarray(im)  # contiguous
             im = torch.from_numpy(im)
 
-        im = im.to(device or self.device)
+        device = device or self.device
+
+        im = im.to(device)
         im = im.half() if self.model.fp16 else im.float()  # uint8 to fp16/32
         if not_tensor:
             im /= 255  # 0 - 255 to 0.0 - 1.0
@@ -363,7 +365,6 @@ class BasePredictor:
                             if self.args.verbose:
                                 LOGGER.info(f"running preprocess on {self.preprocess_device}")
                         im = self.preprocess(im0s, device=self.preprocess_device)
-                        im = im.to(self.device)
                         if self.args.verbose:
                             LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
                         if phase == 'preprocess':
@@ -374,6 +375,7 @@ class BasePredictor:
                 if phase is None or phase == 'inference':
                     if phase == 'inference':
                         im = phase_input[0]
+                    im = im.to(self.device)
                     with profilers[1]:
                         preds = self.inference(im, *args, **kwargs)
                         torch.cuda.synchronize()
@@ -393,6 +395,10 @@ class BasePredictor:
                             if self.args.verbose:
                                 LOGGER.info(f"running postprocess on {self.postprocess_device}")
                             im = im.to(self.postprocess_device)
+                            if isinstance(preds, (list, tuple)):
+                                preds[0] = preds[0].to(self.postprocess_device)
+                            else:
+                                preds = preds.to(self.postprocess_device)
                         self.results = self.postprocess(preds, im, im0s)
                     self.run_callbacks("on_predict_postprocess_end")
 
