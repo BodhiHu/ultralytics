@@ -204,7 +204,7 @@ class BasePredictor:
             else False
         )
 
-        if self.use_graph and (self.model.pt or self.model.jit):
+        if self.args.use_graph and (self.model.pt or self.model.jit):
             LOGGER.info("using pytorch cuda graph")
             return self.graph_inference(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
@@ -361,10 +361,10 @@ class BasePredictor:
                 # Preprocess
                 if phase is None or phase == 'preprocess':
                     with profilers[0]:
-                        if self.preprocess_device:
+                        if self.args.preprocess_device:
                             if self.args.verbose:
-                                LOGGER.info(f"running preprocess on {self.preprocess_device}")
-                        im = self.preprocess(im0s, device=self.preprocess_device)
+                                LOGGER.info(f"running preprocess on {self.args.preprocess_device}")
+                        im = self.preprocess(im0s, device=self.args.preprocess_device)
                         if self.args.verbose:
                             LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
                         if phase == 'preprocess':
@@ -391,14 +391,14 @@ class BasePredictor:
                     if phase == 'postprocess':
                         (preds, im) = phase_input
                     with profilers[2]:
-                        if self.postprocess_device is not None:
+                        if self.args.postprocess_device is not None:
                             if self.args.verbose:
-                                LOGGER.info(f"running postprocess on {self.postprocess_device}")
-                            im = im.to(self.postprocess_device)
+                                LOGGER.info(f"running postprocess on {self.args.postprocess_device}")
+                            im = im.to(self.args.postprocess_device)
                             if isinstance(preds, (list, tuple)):
-                                preds[0] = preds[0].to(self.postprocess_device)
+                                preds[0] = preds[0].to(self.args.postprocess_device)
                             else:
-                                preds = preds.to(self.postprocess_device)
+                                preds = preds.to(self.args.postprocess_device)
                         self.results = self.postprocess(preds, im, im0s)
                     self.run_callbacks("on_predict_postprocess_end")
 

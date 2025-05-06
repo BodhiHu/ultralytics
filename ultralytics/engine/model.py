@@ -548,10 +548,7 @@ class Model(torch.nn.Module):
         if prompts and hasattr(self.predictor, "set_prompts"):  # for SAM-type models
             self.predictor.set_prompts(prompts)
 
-        self.predictor.use_graph = args.get("use_graph", False)
-        self.predictor.postprocess_device = args.get("postprocess_device", None)
-        self.predictor.preprocess_device = args.get("preprocess_device", None)
-
+        # passing following args as function parameters to make them thread safe:
         kwargs = {
             "phase": args.get("phase", None),
             "phase_input": args.get("phase_input", None),
