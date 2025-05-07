@@ -152,7 +152,7 @@ class BasePredictor:
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
 
-    def preprocess(self, im, device=None):
+    def preprocess(self, im, device=None, **kwargs):
         """
         Prepares input image before inference.
 
@@ -161,7 +161,7 @@ class BasePredictor:
         """
         not_tensor = not isinstance(im, torch.Tensor)
         if not_tensor:
-            im = np.stack(self.pre_transform(im))
+            im = np.stack(self.pre_transform(im, **kwargs))
             im = im[..., ::-1].transpose((0, 3, 1, 2))  # BGR to RGB, BHWC to BCHW, (n, 3, h, w)
             im = np.ascontiguousarray(im)  # contiguous
             im = torch.from_numpy(im)
@@ -169,7 +169,12 @@ class BasePredictor:
         device = device or self.device
 
         im = im.to(device)
-        im = im.half() if self.model.fp16 else im.float()  # uint8 to fp16/32
+        half = self.model.fp16
+        if kwargs.get('half', None) is not None:
+            # allow kwargs override half
+            half = kwargs.get('half', None)
+
+        im = im.half() if half else im.float()  # uint8 to fp16/32
         if not_tensor:
             im /= 255  # 0 - 255 to 0.0 - 1.0
         return im
@@ -210,7 +215,7 @@ class BasePredictor:
 
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
-    def pre_transform(self, im):
+    def pre_transform(self, im, **kwargs):
         """
         Pre-transform input image before inference.
 
@@ -222,7 +227,7 @@ class BasePredictor:
         """
         same_shapes = len({x.shape for x in im}) == 1
         letterbox = LetterBox(
-            self.imgsz,
+            kwargs.get('imgsz') or self.imgsz,
             auto=same_shapes and (self.model.pt or (getattr(self.model, "dynamic", False) and not self.model.imx)),
             stride=self.model.stride,
         )
@@ -361,12 +366,9 @@ class BasePredictor:
                 # Preprocess
                 if phase is None or phase == 'preprocess':
                     with profilers[0]:
-                        if self.args.preprocess_device:
-                            if self.args.verbose:
-                                LOGGER.info(f"running preprocess on {self.args.preprocess_device}")
                         im = self.preprocess(im0s, device=self.args.preprocess_device)
-                        if self.args.verbose:
-                            LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
+                        # if self.args.verbose:
+                        #     LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
                         if phase == 'preprocess':
                             yield im
                             continue
@@ -392,8 +394,6 @@ class BasePredictor:
                         (preds, im) = phase_input
                     with profilers[2]:
                         if self.args.postprocess_device is not None:
-                            if self.args.verbose:
-                                LOGGER.info(f"running postprocess on {self.args.postprocess_device}")
                             im = im.to(self.args.postprocess_device)
                             if isinstance(preds, (list, tuple)):
                                 preds[0] = preds[0].to(self.args.postprocess_device)
