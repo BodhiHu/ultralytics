@@ -32,6 +32,7 @@ class DetectionPredictor(BasePredictor):
 
     def postprocess(self, preds, img, orig_imgs, **kwargs):
         """Post-processes predictions and returns a list of Results objects."""
+        self.batch = kwargs.pop('batch', None) or self.batch
         preds = ops.non_max_suppression(
             preds,
             self.args.conf,

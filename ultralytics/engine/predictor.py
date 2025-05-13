@@ -367,8 +367,8 @@ class BasePredictor:
                 if phase is None or phase == 'preprocess':
                     with profilers[0]:
                         im = self.preprocess(im0s, device=self.args.preprocess_device)
-                        # if self.args.verbose:
-                        #     LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
+                        if self.args.verbose:
+                            LOGGER.info(f"PREROCESS: imgsz = {self.imgsz}, input image shape = {im0s[0].shape}, tensor shape = {im.shape}")
                         if phase == 'preprocess':
                             yield im
                             continue
