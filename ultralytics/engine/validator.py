@@ -237,7 +237,8 @@ class BaseValidator:
 
                     assert im.shape == self.graph_in.shape
 
-                    self.graph_in.copy_(im)
+                    with torch.inference_mode():
+                        self.graph_in.copy_(im)
                     self.graph.replay()
                     torch.cuda.synchronize()
                     preds = self.graph_out[0]
