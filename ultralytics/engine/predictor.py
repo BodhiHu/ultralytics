@@ -198,7 +198,7 @@ class BasePredictor:
 
         with torch.inference_mode():
             self.graph_in.copy_(im)
-        self.graph.replay()
+            self.graph.replay()
         torch.cuda.synchronize()
         return self.graph_out[0]
 
