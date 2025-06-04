@@ -211,7 +211,6 @@ class BasePredictor:
         )
 
         if self.args.use_graph and (self.model.pt or self.model.jit):
-            LOGGER.info("using pytorch cuda graph")
             return self.graph_inference(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
