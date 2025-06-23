@@ -69,6 +69,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch.fx import Proxy
 
 from ultralytics.cfg import TASK2DATA, get_cfg
 from ultralytics.data import build_dataloader
@@ -1582,18 +1583,40 @@ class NMSModel(torch.nn.Module):
 
         preds = self.model(x)
         pred = preds[0] if isinstance(preds, tuple) else preds
-        kwargs = dict(device=pred.device, dtype=pred.dtype)
-        bs = pred.shape[0]
+        # fixme: fxtrace
+        # kwargs = dict(device=pred.device, dtype=pred.dtype)
+        kwargs = {
+            "device": "musa:0",
+            "dtype": torch.float32
+        }
+        # fixme: fxtrace
+        # bs = pred.shape[0]
+        bs = 1
         pred = pred.transpose(-1, -2)  # shape(1,84,6300) to shape(1,6300,84)
-        extra_shape = pred.shape[-1] - (4 + len(self.model.names))  # extras from Segment, OBB, Pose
+        # fixme: fxtrace
+        # extra_shape = pred.shape[-1] - (4 + len(self.model.names))  # extras from Segment, OBB, Pose
+        extra_shape = 0
         if self.args.dynamic and self.args.batch > 1:  # batch size needs to always be same due to loop unroll
             pad = torch.zeros(torch.max(torch.tensor(self.args.batch - bs), torch.tensor(0)), *pred.shape[1:], **kwargs)
             pred = torch.cat((pred, pad))
         boxes, scores, extras = pred.split([4, len(self.model.names), extra_shape], dim=2)
         scores, classes = scores.max(dim=-1)
-        self.args.max_det = min(pred.shape[1], self.args.max_det)  # in case num_anchors < max_det
+
+        # fixme: fxtrace
+        # self.args.max_det = min(pred.shape[1], self.args.max_det)  # in case num_anchors < max_det
+        print(
+            f">>>>> bs = {bs}, max_det = {self.args.max_det}, pred.shape[1] = {pred.shape[1]}\n"
+            f"      boxes.shape[-1] = {boxes.shape[-1]}\n"
+            f"      extra_shape = {extra_shape}\n"
+            f"      self.args = {self.args}\n"
+            f"      kwargs = {kwargs}\n"
+        )
+
         # (N, max_det, 4 coords + 1 class score + 1 class label + extra_shape).
-        out = torch.zeros(bs, self.args.max_det, boxes.shape[-1] + 2 + extra_shape, **kwargs)
+        # fixme: fxtrace
+        # out = torch.zeros(bs, self.args.max_det, boxes.shape[-1] + 2 + extra_shape, **kwargs)
+        out = torch.zeros(bs, self.args.max_det, 4 + 2 + extra_shape, **kwargs)
+
         for i in range(bs):
             box, cls, score, extra = boxes[i], classes[i], scores[i], extras[i]
             mask = score > self.args.conf
@@ -1615,7 +1638,9 @@ class NMSModel(torch.nn.Module):
             if self.args.format == "tflite":  # TFLite is already normalized
                 nmsbox *= multiplier
             else:
-                nmsbox = multiplier * nmsbox / torch.tensor(x.shape[2:], **kwargs).max()
+                # fixme: fxtrace
+                # nmsbox = multiplier * nmsbox / torch.tensor(x.shape[2:], **kwargs).max()
+                nmsbox = multiplier * nmsbox / torch.tensor(torch.Size([640, 640]), **kwargs).max()
             if not self.args.agnostic_nms:  # class-specific NMS
                 end = 2 if self.obb else 4
                 # fully explicit expansion otherwise reshape error
@@ -1623,23 +1648,37 @@ class NMSModel(torch.nn.Module):
                 cls_offset = cls.reshape(-1, 1).expand(nmsbox.shape[0], end)
                 offbox = nmsbox[:, :end] + cls_offset * multiplier
                 nmsbox = torch.cat((offbox, nmsbox[:, end:]), dim=-1)
-            nms_fn = (
-                partial(
-                    nms_rotated,
-                    use_triu=not (
-                        self.is_tf
-                        or (self.args.opset or 14) < 14
-                        or (self.args.format == "openvino" and self.args.int8)  # OpenVINO int8 error with triu
-                    ),
-                )
-                if self.obb
-                else nms
-            )
-            keep = nms_fn(
+
+            # fixme: fxtrace
+            # nms_fn = (
+            #     partial(
+            #         nms_rotated,
+            #         use_triu=not (
+            #             self.is_tf
+            #             or (self.args.opset or 14) < 14
+            #             or (self.args.format == "openvino" and self.args.int8)  # OpenVINO int8 error with triu
+            #         ),
+            #     )
+            #     if self.obb
+            #     else nms
+            # )
+            nms_fn = nms
+
+            # fixme: fxtrace
+            # keep = nms_fn(
+            #     torch.cat([nmsbox, extra], dim=-1) if self.obb else nmsbox,
+            #     score,
+            #     self.args.iou,
+            # )[: self.args.max_det]
+            res = nms_fn(
                 torch.cat([nmsbox, extra], dim=-1) if self.obb else nmsbox,
                 score,
                 self.args.iou,
-            )[: self.args.max_det]
+            )
+            print(f">>>>> res.shape = {res.shape}")
+            # TODO: torch_musa AoT 还不支持此类 op, 暂时没有好的 workaground
+            keep = res[:self.args.max_det]
+
             dets = torch.cat(
                 [box[keep], score[keep].view(-1, 1), cls[keep].view(-1, 1).to(out.dtype), extra[keep]], dim=-1
             )

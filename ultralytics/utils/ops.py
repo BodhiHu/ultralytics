@@ -13,6 +13,8 @@ import torch.nn.functional as F
 from ultralytics.utils import LOGGER
 from ultralytics.utils.metrics import batch_probiou
 
+from torch.fx import Proxy
+
 
 class Profile(contextlib.ContextDecorator):
     """
@@ -440,6 +442,16 @@ def xywh2xyxy(x):
     Returns:
         y (np.ndarray | torch.Tensor): The bounding box coordinates in (x1, y1, x2, y2) format.
     """
+
+    if isinstance(x, Proxy):
+        xy = x[..., :2]           # center x, y
+        wh_half = x[..., 2:] / 2  # half width and height
+        top_left = xy - wh_half
+        bottom_right = xy + wh_half
+        y = torch.cat((top_left, bottom_right), dim=-1)
+        return y
+
+    assert x.shape[-1] == 4, f"expected shape[-1] == 4, got {x.shape}"
     assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
     y = empty_like(x)  # faster than clone/copy
     xy = x[..., :2]  # centers
@@ -871,5 +883,5 @@ def clean_str(s):
 def empty_like(x):
     """Creates empty torch.Tensor or np.ndarray with same shape as input and float32 dtype."""
     return (
-        torch.empty_like(x, dtype=torch.float32) if isinstance(x, torch.Tensor) else np.empty_like(x, dtype=np.float32)
+        torch.empty_like(x, dtype=torch.float32) if isinstance(x, (torch.Tensor, Proxy)) else np.empty_like(x, dtype=np.float32)
     )

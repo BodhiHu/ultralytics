@@ -297,33 +297,39 @@ class C2f(nn.Module):
 
     def forward(self, x):
         """Forward pass through C2f layer."""
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
+        # y = list(self.cv1(x).chunk(2, 1))
+        # y.extend(m(y[-1]) for m in self.m)
+        # @bodhi: symtrace
+        y0, y1 = self.cv1(x).chunk(2, 1)
+        y = [y0, y1]
+        for m in self.m:
+            out = m(y[-1])
+            y.append(out)
 
-        is_quantized = False
-        q_dtype = None
-        for i in range(len(y)):
-            if y[i].is_quantized:
-                is_quantized = True
-                q_dtype = y[i].dtype
-                y[i] = y[i].dequantize().half()
+        # is_quantized = False
+        # q_dtype = None
+        # for i in range(len(y)):
+        #     if y[i].is_quantized:
+        #         is_quantized = True
+        #         q_dtype = y[i].dtype
+        #         y[i] = y[i].dequantize().half()
 
         y = torch.cat(y, 1)
-        if is_quantized and not y.is_quantized:
-            if q_dtype == torch.qint8:
-                max_val = torch.max(torch.abs(y))
-                scale = (max_val / 127).item()
-                zero_point = 0
-            # elif q_dtype == torch.quint8:
-            #     min_val = torch.min(y)
-            #     max_val = torch.max(y)
-            #     scale = (max_val - min_val) / 255
-            #     zero_point = torch.round(-min_val / scale).to(torch.int32).item()
-            #     scale = scale.item()
-            else:
-                raise Exception(f"Unsupported quant dtype: {q_dtype}")
+        # if is_quantized and not y.is_quantized:
+        #     if q_dtype == torch.qint8:
+        #         max_val = torch.max(torch.abs(y))
+        #         scale = (max_val / 127).item()
+        #         zero_point = 0
+        #     # elif q_dtype == torch.quint8:
+        #     #     min_val = torch.min(y)
+        #     #     max_val = torch.max(y)
+        #     #     scale = (max_val - min_val) / 255
+        #     #     zero_point = torch.round(-min_val / scale).to(torch.int32).item()
+        #     #     scale = scale.item()
+        #     else:
+        #         raise Exception(f"Unsupported quant dtype: {q_dtype}")
 
-            y = torch.quantize_per_tensor(y.float(), scale=scale, zero_point=zero_point, dtype=q_dtype)
+        #     y = torch.quantize_per_tensor(y.float(), scale=scale, zero_point=zero_point, dtype=q_dtype)
 
         return self.cv2(y)
 
@@ -500,12 +506,12 @@ class Bottleneck(nn.Module):
     def forward(self, x):
         """Apply bottleneck with optional shortcut connection."""
 
-        if x.is_quantized:
-            orig_x = x
-            x = self.cv2(self.cv1(x))
-            if self.add:
-                x = torch.ops.quantized.add(orig_x, x, x.q_scale(), zero_point=x.q_zero_point())
-            return x
+        # if x.is_quantized:
+        #     orig_x = x
+        #     x = self.cv2(self.cv1(x))
+        #     if self.add:
+        #         x = torch.ops.quantized.add(orig_x, x, x.q_scale(), zero_point=x.q_zero_point())
+        #     return x
 
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
