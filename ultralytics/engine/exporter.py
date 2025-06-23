@@ -1676,7 +1676,7 @@ class NMSModel(torch.nn.Module):
                 self.args.iou,
             )
             print(f">>>>> res.shape = {res.shape}")
-            # TODO: torch_musa AoT 还不支持此类 op, 暂时没有好的 workaground
+            # TODO: torch_musa AoT 还不支持此类 op, 暂时没有好的 work-round
             keep = res[:self.args.max_det]
 
             dets = torch.cat(
