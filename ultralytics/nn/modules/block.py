@@ -298,7 +298,11 @@ class C2f(nn.Module):
     def forward(self, x):
         """Forward pass through C2f layer."""
         y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
+        # torch.compile issue, see:
+        # https://github.com/ultralytics/ultralytics/issues/13800#issuecomment-2820612530
+        # y.extend(m(y[-1]) for m in self.m)
+        for m in self.m:
+            y.append(m(y[-1]))
 
         is_quantized = False
         q_dtype = None
@@ -331,7 +335,11 @@ class C2f(nn.Module):
         """Forward pass using split() instead of chunk()."""
         y = self.cv1(x).split((self.c, self.c), 1)
         y = [y[0], y[1]]
-        y.extend(m(y[-1]) for m in self.m)
+        # torch.compile issue, see:
+        # https://github.com/ultralytics/ultralytics/issues/13800#issuecomment-2820612530
+        # y.extend(m(y[-1]) for m in self.m)
+        for m in self.m:
+            y.append(m(y[-1]))
         return self.cv2(torch.cat(y, 1))
 
 
