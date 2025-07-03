@@ -155,6 +155,57 @@ class BaseModel(torch.nn.Module):
             return self._predict_augment(x)
         return self._predict_once(x, profile, visualize, embed)
 
+    def compare_module_accuracy(self, module: torch.nn.Module, input):
+        name = type(module)
+        print(f"\n>>> compare {name} module:")
+        if isinstance(input, (list, tuple)):
+            input_copy = [inp.clone() for inp in input]
+            for i in range(len(input)):
+                print(f"input[{i}] : shape = {input[i].shape}")
+        else:
+            input_copy = input.clone()
+            print(f"input : shape = {input.shape}")
+        eager_out = module(input)
+        torch.cuda.synchronize()
+
+        # Run compiled version
+        compiled_module = torch.compile(
+            module,
+            backend="inductor",
+            mode='default',
+            fullgraph=True,
+            dynamic=False,
+        )
+        compiled_out = compiled_module(input_copy)
+        torch.cuda.synchronize()
+
+        def check_out(c_out, e_out, idxs = []):
+            if isinstance(c_out, (list, tuple)):
+                for i in range(len(c_out)):
+                    check_out(c_out[i], e_out[i], [*idxs, i])
+            elif isinstance(c_out, torch.Tensor):
+                assert c_out.shape == e_out.shape
+                assert c_out.dtype == e_out.dtype
+                print(f"output-{idxs}: shape = {e_out.shape}")
+
+                allclose = torch.allclose(c_out, e_out, atol=1e-2, rtol=1e-2)
+                max_diff = (c_out - e_out).abs().max().item()
+                if allclose:
+                    print(
+                        f"  ✅ ALLCLOSE passed: {name}\n"
+                        f"     max_diff: {max_diff:.6f}"
+                    )
+                else:
+                    print(
+                        f"  ❌ ALLCLOSE failed: {name}\n"
+                        f"      max_diff: {max_diff:.6f}"
+                    )
+
+        check_out(compiled_out, eager_out)
+
+        return eager_out
+
+
     def _predict_once(self, x, profile=False, visualize=False, embed=None):
         """
         Perform a forward pass through the network.
@@ -176,7 +227,8 @@ class BaseModel(torch.nn.Module):
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            x = m(x)  # run
+            # x = m(x)  # run
+            x = self.compare_module_accuracy(m, x)
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
