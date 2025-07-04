@@ -638,30 +638,43 @@ def unset_deterministic():
 
 accuracies_check_cfgs = {
     'per_layer_check': False,
+    'backend': 'inductor', # eager | inductor
+    'mode': 'max-autotune',
+    'fullgraph': True,
+    'dynamic': False,
 }
 def compare_compiled_module_accuracy(module: torch.nn.Module, input, atol=1e-2, rtol=1e-5):
     name = type(module)
     print(f"\n>>> compare {name} module:")
-    if isinstance(input, (list, tuple)):
-        input_copy = [inp.clone() for inp in input]
-        for i in range(len(input)):
-            print(f"input[{i}] : shape = {input[i].shape}")
-    else:
-        input_copy = input.clone()
-        print(f"input : shape = {input.shape}")
-    eager_out = module(input)
+    def clone_input(input):
+        if isinstance(input, (list, tuple)):
+            input_copy = [inp.clone() for inp in input]
+            # for i in range(len(input)):
+            #     print(f"input[{i}] : shape = {input[i].shape}")
+        else:
+            input_copy = input.clone()
+            # print(f"input : shape = {input.shape}")
+
+        return input_copy
+
+    eager_out = module(clone_input(input))
     torch.cuda.synchronize()
 
     # Run compiled version
     compiled_module = torch.compile(
         module,
-        backend="inductor",
-        mode='default',
-        fullgraph=True,
-        dynamic=False,
+        # backend='inductor',
+        backend=accuracies_check_cfgs['backend'],
+        mode=accuracies_check_cfgs['mode'],
+        fullgraph=accuracies_check_cfgs['fullgraph'],
+        dynamic=accuracies_check_cfgs['dynamic'],
     )
-    compiled_out = compiled_module(input_copy)
-    torch.cuda.synchronize()
+    for _ in range(3):
+        compiled_out = compiled_module(clone_input(input))
+        torch.cuda.synchronize()
+
+    def rmse(a, b):
+        return torch.sqrt(torch.mean((a - b) ** 2)).item()
 
     def check_out(c_out, e_out, idxs = []):
         if isinstance(c_out, (list, tuple)):
@@ -672,18 +685,21 @@ def compare_compiled_module_accuracy(module: torch.nn.Module, input, atol=1e-2, 
             assert c_out.dtype == e_out.dtype
             print(f"output-{idxs}: shape = {e_out.shape}")
 
+            c_out = c_out.clone().cpu()
+            e_out = e_out.clone().cpu()
             allclose = torch.allclose(c_out, e_out, atol=atol, rtol=rtol)
             max_diff = (c_out - e_out).abs().max().item()
-            if allclose:
-                print(
-                    f"  ✅ ALLCLOSE passed: {name}\n"
-                    f"     max_diff: {max_diff:.6f}"
-                )
-            else:
-                print(
-                    f"  ❌ ALLCLOSE failed: {name}\n"
-                    f"      max_diff: {max_diff:.6f}"
-                )
+            _rmse    = rmse(c_out, e_out)
+            rmse_ok  = _rmse < 1e-3
+
+            allc_status = '✅' if allclose else '❌'
+            rmse_status     = '✅' if rmse_ok else '❌'
+            print(
+                f"  ALLCLOSE {allc_status}:\n"
+                f"     max_diff: {max_diff:.6f}\n"
+                f"  RMSE     {rmse_status}:\n"
+                f"     rmse    : {_rmse:.6f}"
+            )
 
     check_out(compiled_out, eager_out)
 
