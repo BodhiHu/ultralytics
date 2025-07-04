@@ -636,6 +636,60 @@ def unset_deterministic():
     os.environ.pop("PYTHONHASHSEED", None)
 
 
+accuracies_check_cfgs = {
+    'per_layer_check': False,
+}
+def compare_compiled_module_accuracy(module: torch.nn.Module, input, atol=1e-2, rtol=1e-5):
+    name = type(module)
+    print(f"\n>>> compare {name} module:")
+    if isinstance(input, (list, tuple)):
+        input_copy = [inp.clone() for inp in input]
+        for i in range(len(input)):
+            print(f"input[{i}] : shape = {input[i].shape}")
+    else:
+        input_copy = input.clone()
+        print(f"input : shape = {input.shape}")
+    eager_out = module(input)
+    torch.cuda.synchronize()
+
+    # Run compiled version
+    compiled_module = torch.compile(
+        module,
+        backend="inductor",
+        mode='default',
+        fullgraph=True,
+        dynamic=False,
+    )
+    compiled_out = compiled_module(input_copy)
+    torch.cuda.synchronize()
+
+    def check_out(c_out, e_out, idxs = []):
+        if isinstance(c_out, (list, tuple)):
+            for i in range(len(c_out)):
+                check_out(c_out[i], e_out[i], [*idxs, i])
+        elif isinstance(c_out, torch.Tensor):
+            assert c_out.shape == e_out.shape
+            assert c_out.dtype == e_out.dtype
+            print(f"output-{idxs}: shape = {e_out.shape}")
+
+            allclose = torch.allclose(c_out, e_out, atol=atol, rtol=rtol)
+            max_diff = (c_out - e_out).abs().max().item()
+            if allclose:
+                print(
+                    f"  ✅ ALLCLOSE passed: {name}\n"
+                    f"     max_diff: {max_diff:.6f}"
+                )
+            else:
+                print(
+                    f"  ❌ ALLCLOSE failed: {name}\n"
+                    f"      max_diff: {max_diff:.6f}"
+                )
+
+    check_out(compiled_out, eager_out)
+
+    return eager_out
+
+
 class ModelEMA:
     """
     Updated Exponential Moving Average (EMA) implementation.
