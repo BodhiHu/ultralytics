@@ -196,15 +196,21 @@ class AutoBackend(nn.Module):
 
         # In-memory PyTorch model
         if nn_module:
-            model = weights.to(device)
-            if fuse:
-                model = model.fuse(verbose=verbose)
-            if hasattr(model, "kpt_shape"):
-                kpt_shape = model.kpt_shape  # pose-only
-            stride = max(int(model.stride.max()), 32)  # model stride
-            names = model.module.names if hasattr(model, "module") else model.names  # get class names
-            model.half() if fp16 else model.float()
-            ch = model.yaml.get("channels", 3)
+            if not hasattr(weights, "_aot_model"):
+                model = weights.to(device)
+                if fuse:
+                    model = model.fuse(verbose=verbose)
+                if hasattr(model, "kpt_shape"):
+                    kpt_shape = model.kpt_shape  # pose-only
+                stride = max(int(model.stride.max()), 32)  # model stride
+                names = model.module.names if hasattr(model, "module") else model.names  # get class names
+                model.half() if fp16 else model.float()
+                ch = model.yaml.get("channels", 3)
+            else:
+                model = weights
+                stride = max(int(model.stride.max()), 32)  # model stride
+                names = model.names  # get class names
+                ch = model.yaml.get("channels", 3)
             self.model = model  # explicitly assign for to(), cpu(), cuda(), half()
             pt = True
 
@@ -641,8 +647,12 @@ class AutoBackend(nn.Module):
         if self.nhwc:
             im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
 
+        # AoT
+        if hasattr(self.model, "_aot_model"):
+            y = self.model(im)
+
         # PyTorch
-        if self.pt or self.nn_module:
+        elif self.pt or self.nn_module:
             y = self.model(im, augment=augment, visualize=visualize, embed=embed, **kwargs)
 
         # TorchScript
